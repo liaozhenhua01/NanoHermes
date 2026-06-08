@@ -61,7 +61,7 @@ def create_server(name: str = "nanohermes-mcp") -> FastMCP:
 
 def register_pilot_tools(mcp: FastMCP) -> None:
     """注册试点工具到 MCP 服务器"""
-    from src.tools.file_tools import read_file
+    from src.tools.file_tool import read_file
     from src.tools.terminal import execute_command
 
     tools_to_register = [
@@ -83,22 +83,20 @@ def run_stdio(mcp: FastMCP) -> None:
 
 def run_streamable_http(mcp: FastMCP, config: TransportConfig) -> None:
     """Streamable HTTP 传输启动逻辑"""
+    # 设置 host 和 port 在 settings 中
+    mcp.settings.host = config.host
+    mcp.settings.port = config.port
     logger.info(f"Starting MCP server in streamable-http mode at {config.get_server_url()}")
-    mcp.run(
-        transport="streamable-http",
-        host=config.host,
-        port=config.port,
-    )
+    mcp.run(transport="streamable-http")
 
 
 def run_sse(mcp: FastMCP, config: TransportConfig) -> None:
     """HTTP+SSE 传输启动逻辑（旧版兼容）"""
+    # 设置 host 和 port 在 settings 中
+    mcp.settings.host = config.host
+    mcp.settings.port = config.port
     logger.info(f"Starting MCP server in SSE mode at {config.get_server_url()} (deprecated)")
-    mcp.run(
-        transport="sse",
-        host=config.host,
-        port=config.port,
-    )
+    mcp.run(transport="sse")
 
 
 def main():

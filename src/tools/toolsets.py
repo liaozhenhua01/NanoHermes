@@ -1,127 +1,121 @@
 """工具集定义和解析。
 
-工具集是命名的工具分组，用于：
-1. 按平台启用/禁用不同的工具组合
-2. 控制发送给 LLM 的工具 schema 数量
-3. 限制子 Agent 可访问的工具
-
-解析逻辑：
-- enabled_toolsets: 只包含列出的工具集（白名单）
-- disabled_toolsets: 排除列出的工具集（黑名单）
-- 两者都为空：包含所有工具集
+工具集是命名的工具分组，用于动态选择要暴露给 LLM 的工具子集。
+支持 enabled_toolsets（白名单）和 disabled_toolsets（黑名单）两种过滤模式。
 """
 
-from __future__ import annotations
+from typing import Callable, Optional
 
-# ============================================================================
-# 工具集定义
-# ============================================================================
-# 格式：toolset_name → [tool_name1, tool_name2, ...]
-#
-# 每个工具集代表一组功能相关的工具。平台（CLI、Telegram 等）选择
-# 不同的工具集组合来暴露给 Agent。
-# ============================================================================
+# TOOLSETS 映射：toolset 名称 → 工具名称列表
 TOOLSETS: dict[str, list[str]] = {
-    # 终端工具集：命令执行
     "terminal": ["terminal", "process"],
-
-    # 文件工具集：文件读写、搜索、patch
     "file": ["read_file", "write_file", "search_files", "patch"],
-
-    # 搜索工具集：网络搜索
-    "search": ["web_search"],
-
-    # 安全工具集：只读操作
-    "safe": ["read_file", "search_files"],
-
-    # 默认工具集
+    "memory": ["memory"],
+    "skills": ["skill_manage", "skill_view", "skills_list"],
+    "delegation": ["delegate_task"],
+    "todo": ["todo"],
+    "session_search": ["session_search"],
     "clarify": ["clarify"],
     "code_execution": ["execute_code"],
     "cronjob": ["cronjob"],
-    "delegation": ["delegate_task"],
-    "memory": ["memory"],
-    "session_search": ["session_search"],
-    "skills": ["skill_manage", "skill_view", "skills_list"],
-    "todo": ["todo"],
+    "web": ["web_search"],
 }
 
-# 旧版工具集名称映射（向后兼容）
-# 例如："terminal_tools" → "terminal"
-_LEGACY_TOOLSET_MAP: dict[str, str] = {
+# 旧版工具集名称映射 → 现代名称
+LEGACY_TOOLSET_MAP: dict[str, str] = {
     "terminal_tools": "terminal",
     "file_tools": "file",
-    "search_tools": "search",
-    "safe_tools": "safe",
+    "memory_tools": "memory",
+    "skills_tools": "skills",
+    "delegation_tools": "delegation",
+    "todo_tools": "todo",
 }
 
+# 工具集可用性检查函数（可选）
+TOOLSET_CHECK_FNS: dict[str, Callable[[], bool]] = {}
 
-def resolve_toolset(
-    toolset_name: str,
-    enabled_toolsets: list[str] | None = None,
-    disabled_toolsets: list[str] | None = None,
-) -> set[str]:
-    """解析工具集为工具名称集合。
 
-    解析逻辑：
-    1. 如果 enabled_toolsets 不为空，只返回这些工具集中的工具
-    2. 如果 disabled_toolsets 不为空，返回所有工具集排除禁用的
-    3. 如果两者都为空，返回所有工具集中的所有工具
+def resolve_toolset(name: str) -> set[str]:
+    """将工具集名称展开为工具名称集合。
+
+    支持旧版名称自动映射到现代名称。
+    如果工具集不存在，返回空集合。
 
     Args:
-        toolset_name: 要解析的工具集名称（或逗号分隔的多个名称）。
-        enabled_toolsets: 启用的工具集列表（白名单）。
-        disabled_toolsets: 禁用的工具集列表（黑名单）。
+        name: 工具集名称（如 "terminal", "terminal_tools"）。
 
     Returns:
-        工具名称集合。
+        该工具集包含的工具名称集合。
     """
-    # 处理旧版名称
-    toolset_name = _LEGACY_TOOLSET_MAP.get(toolset_name, toolset_name)
+    # 尝试旧版名称映射
+    modern_name = LEGACY_TOOLSET_MAP.get(name, name)
 
-    # 获取工具集中的工具名称
-    tool_names: set[str] = set()
-    for name in toolset_name.split(","):
-        name = name.strip()
-        name = _LEGACY_TOOLSET_MAP.get(name, name)
-        if name in TOOLSETS:
-            tool_names.update(TOOLSETS[name])
+    if modern_name not in TOOLSETS:
+        return set()
 
-    return tool_names
+    return set(TOOLSETS[modern_name])
 
 
 def resolve_enabled_toolsets(
-    enabled_toolsets: list[str] | None = None,
-    disabled_toolsets: list[str] | None = None,
+    enabled_toolsets: Optional[list[str]] = None,
+    disabled_toolsets: Optional[list[str]] = None,
 ) -> set[str]:
-    """解析启用/禁用的工具集为最终的工具名称集合。
+    """解析当前启用的工具集，返回所有应启用的工具名称。
+
+    优先级：
+    1. 如果 enabled_toolsets 非空：只包含列出的工具集（白名单模式）
+    2. 如果 disabled_toolsets 非空：排除列出的工具集（黑名单模式）
+    3. 两者都为空：包含所有工具集
 
     Args:
-        enabled_toolsets: 启用的工具集列表。
-        disabled_toolsets: 禁用的工具集列表。
+        enabled_toolsets: 要启用的工具集名称列表。
+        disabled_toolsets: 要禁用的工具集名称列表。
 
     Returns:
-        最终的工具名称集合。
+        所有应启用的工具名称集合。
     """
-    if enabled_toolsets:
-        # 白名单模式：只包含启用的
-        result: set[str] = set()
-        for ts in enabled_toolsets:
-            ts = _LEGACY_TOOLSET_MAP.get(ts, ts)
-            if ts in TOOLSETS:
-                result.update(TOOLSETS[ts])
-        return result
-
-    if disabled_toolsets:
-        # 黑名单模式：所有工具集排除禁用的
-        disabled_set = {_LEGACY_TOOLSET_MAP.get(ts, ts) for ts in disabled_toolsets}
-        result = set()
-        for ts_name, tools in TOOLSETS.items():
-            if ts_name not in disabled_set:
-                result.update(tools)
-        return result
-
-    # 默认：所有工具
     result = set()
-    for tools in TOOLSETS.values():
-        result.update(tools)
+
+    if enabled_toolsets:
+        # 白名单模式：只包含列出的工具集
+        for ts_name in enabled_toolsets:
+            modern_name = LEGACY_TOOLSET_MAP.get(ts_name, ts_name)
+            if modern_name in TOOLSETS:
+                # 检查可用性
+                check_fn = TOOLSET_CHECK_FNS.get(modern_name)
+                if check_fn and not check_fn():
+                    continue
+                result.update(TOOLSETS[modern_name])
+    elif disabled_toolsets:
+        # 黑名单模式：排除列出的工具集
+        disabled_set = set()
+        for ts_name in disabled_toolsets:
+            modern_name = LEGACY_TOOLSET_MAP.get(ts_name, ts_name)
+            disabled_set.add(modern_name)
+
+        for ts_name, tools in TOOLSETS.items():
+            if ts_name in disabled_set:
+                continue
+            check_fn = TOOLSET_CHECK_FNS.get(ts_name)
+            if check_fn and not check_fn():
+                continue
+            result.update(tools)
+    else:
+        # 包含所有工具集
+        for ts_name, tools in TOOLSETS.items():
+            check_fn = TOOLSET_CHECK_FNS.get(ts_name)
+            if check_fn and not check_fn():
+                continue
+            result.update(tools)
+
     return result
+
+
+def register_toolset_check(name: str, check_fn: Callable[[], bool]) -> None:
+    """注册工具集可用性检查函数。
+
+    Args:
+        name: 工具集名称。
+        check_fn: 返回布尔值的无参函数，True 表示可用。
+    """
+    TOOLSET_CHECK_FNS[name] = check_fn
