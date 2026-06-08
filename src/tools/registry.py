@@ -225,6 +225,7 @@ class ToolRegistry:
             "src.tools.skills_tool",
             "src.tools.process_tool",
             "src.tools.todo_tool",
+            "src.tools.web_search_tool",
         ]
 
         for module_name in tool_modules:
